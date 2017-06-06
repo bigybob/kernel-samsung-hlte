@@ -654,4 +654,6 @@ CONFIG_SENSORS_HALL=y
 # zmensi boot.img, jinak pise chybu
 CONFIG_KERNEL_XZ=y
 # adreno idler 1.1
-CONFIG_ADRENO_IDLER
+CONFIG_ADRENO_IDLER=y
+# powersuspend 1.7
+CONFIG_POWERSUSPEND=y
