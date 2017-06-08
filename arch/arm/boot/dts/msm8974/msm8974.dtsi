@@ -331,6 +331,7 @@
 		qcom,clk-rates = <400000 20000000 25000000 50000000 100000000 200000000>;
 		qcom,sup-voltages = <2950 2950>;
 		qcom,bus-width = <8>;
+		qcom,wakeup-on-idle;
 		qcom,nonremovable;
 		qcom,bus-speed-mode = "HS200_1p8v", "DDR_1p8v";
 
@@ -2067,8 +2068,8 @@
 		compatible = "qcom,msm-watchdog";
 		reg = <0xf9017000 0x1000>;
 		interrupts = <0 3 0>, <0 4 0>;
-		qcom,bark-time = <11000>;
-		qcom,pet-time = <10000>;
+		qcom,bark-time = <25000>;
+		qcom,pet-time = <20000>;
 		qcom,ipi-ping;
 	};
 
@@ -2189,6 +2190,7 @@
 
         qcom,qcrypto1@fd440000 {
 		compatible = "qcom,qcrypto";
+		status = "disabled";
 		reg = <0xfd440000 0x20000>,
 		      <0xfd444000 0x1b000>;
 		reg-names = "crypto-base","crypto-bam-base";
