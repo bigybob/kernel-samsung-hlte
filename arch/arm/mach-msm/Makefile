@@ -506,6 +506,8 @@ obj-$(CONFIG_PERFMAP) += perfmap.o
 obj-$(CONFIG_SEC_VIENNA_PROJECT) += board-vienna-motor.o
 obj-$(CONFIG_SEC_V2_PROJECT) += board-vienna-motor.o
 
+obj-$(CONFIG_MSM_LIMITER) += msm_limiter.o
+
 obj-$(CONFIG_SEC_BSP) += sec_bsp.o
 
 ifdef CONFIG_ARCH_MSM8226
