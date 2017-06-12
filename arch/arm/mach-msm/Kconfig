@@ -4861,6 +4861,12 @@ config FORCE_FAST_CHARGE
 	  are detected as USB to charge as AC (1A/h) or to set
 	  custom charging currents for AC and USB.
 
+config HAS_MACH_MEMUTILS
+        default n
+        bool "Motorola MSM memcpy enhancements"
+        help
+        Faster memcpy performance for Krait
+
 config EXTEND_SERIAL_NUM_16
 	bool "serial number is 16 digit"
 	default n
