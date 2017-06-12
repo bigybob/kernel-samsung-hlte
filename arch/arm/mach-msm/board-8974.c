@@ -442,7 +442,7 @@ static struct reserve_info msm8974_reserve_info __initdata = {
 	.paddr_to_memtype = msm8974_paddr_to_memtype,
 };
 
-#define PERSISTENT_RAM_BASE 0xbff00000
+#define PERSISTENT_RAM_BASE 0x1FB00000
 #define PERSISTENT_RAM_SIZE SZ_1M
 #define RAM_CONSOLE_SIZE (124*SZ_1K * 2)
 
