@@ -32,6 +32,15 @@
 #include <linux/regulator/consumer.h>
 #include <linux/qpnp/pin.h>
 
+/*
+ * Disable SAMSUNG DVFS Related Code block.
+ */
+#ifndef CONFIG_SEC_DVFS
+#ifdef TSP_BOOSTER
+#undef TSP_BOOSTER
+#endif
+#endif
+
 #ifdef CONFIG_CPUFREQ_HARDLIMIT
 #include <linux/cpufreq_hardlimit.h>
 #endif
