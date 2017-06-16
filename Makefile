@@ -380,20 +380,13 @@ KBUILD_CPPFLAGS := -D__KERNEL__
 KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common \
 		   -Werror-implicit-function-declaration \
-		   -Wno-format-security -Wno-unused \
+		   -Wno-format-security \
 		   -fno-delete-null-pointer-checks \
 		   -mtune=cortex-a15 \
 		   -std=gnu89 \
                    --param l1-cache-size=32 \
                    --param l2-cache-size=2048 \
-		   --param l1-cache-line-size=64 \
-		   -Wno-format-truncation -Wno-misleading-indentation \
-		   -Wno-int-in-bool-context -Wno-discarded-array-qualifiers \
-		   -Wno-logical-not-parentheses -Wno-pointer-compare \
-		   -Wno-switch-unreachable -Wno-bool-compare \
-		   -Wno-duplicate-decl-specifier -Wno-tautological-compare \
-		   -Wno-switch-bool -Wno-bool-operation -Wno-stringop-overflow \
-		   -Wno-return-type
+		   --param l1-cache-line-size=64
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__
