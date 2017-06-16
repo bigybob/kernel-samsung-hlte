@@ -392,7 +392,8 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -Wno-logical-not-parentheses -Wno-pointer-compare \
 		   -Wno-switch-unreachable -Wno-bool-compare \
 		   -Wno-duplicate-decl-specifier -Wno-tautological-compare \
-		   -Wno-switch-bool -Wno-bool-operation -Wno-stringop-overflow
+		   -Wno-switch-bool -Wno-bool-operation -Wno-stringop-overflow \
+		   -Wno-return-type
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__
