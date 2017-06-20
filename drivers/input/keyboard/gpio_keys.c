@@ -35,15 +35,6 @@
 #endif
 #include <linux/regulator/consumer.h>
 
-/*
- * Disable SAMSUNG DVFS Related Code block.
- */
-#ifndef CONFIG_SEC_DVFS
-#ifdef KEY_BOOSTER
-#undef KEY_BOOSTER
-#endif
-#endif
-
 /* if you want to check gpio status continually use this */
 #if 0
 #define PERIODIC_CHECK_GPIOS
@@ -74,12 +65,6 @@ struct gpio_button_data {
 	spinlock_t lock;
 	bool disabled;
 	bool key_pressed;
-	#ifdef KEY_BOOSTER
-	struct delayed_work	work_dvfs_off;
-	struct delayed_work	work_dvfs_chg;
-	bool dvfs_lock_status;
-	struct mutex		dvfs_lock;
-	#endif
 };
 
 struct gpio_keys_drvdata {
@@ -430,80 +415,6 @@ static struct attribute_group gpio_keys_attr_group = {
 	.attrs = gpio_keys_attrs,
 };
 
-#ifdef KEY_BOOSTER
-static void gpio_key_change_dvfs_lock(struct work_struct *work)
-{
-	struct gpio_button_data *bdata =
-		container_of(work,
-			struct gpio_button_data, work_dvfs_chg.work);
-	int retval;
-	mutex_lock(&bdata->dvfs_lock);
-	retval = set_freq_limit(DVFS_TOUCH_ID,
-			MIN_TOUCH_LIMIT_SECOND);
-	if (retval < 0)
-		printk(KERN_ERR
-			"%s: booster change failed(%d).\n",
-			__func__, retval);
-	mutex_unlock(&bdata->dvfs_lock);
-}
-
-static void gpio_key_set_dvfs_off(struct work_struct *work)
-{
-	struct gpio_button_data *bdata =
-		container_of(work,
-			struct gpio_button_data, work_dvfs_off.work);
-	int retval;
-	mutex_lock(&bdata->dvfs_lock);
-	retval = set_freq_limit(DVFS_TOUCH_ID, -1);
-	if (retval < 0)
-		printk(KERN_ERR
-			"%s: booster stop failed(%d).\n",
-			__func__, retval);
-	bdata->dvfs_lock_status = false;
-	mutex_unlock(&bdata->dvfs_lock);
-}
-
-static void gpio_key_set_dvfs_lock(struct gpio_button_data *bdata,
-					uint32_t on)
-{
-	mutex_lock(&bdata->dvfs_lock);
-	if (on == 0) {
-		if (bdata->dvfs_lock_status) {
-			schedule_delayed_work(&bdata->work_dvfs_off,
-				msecs_to_jiffies(KEY_BOOSTER_OFF_TIME));
-		}
-	} else if (on == 1) {
-		cancel_delayed_work(&bdata->work_dvfs_off);
-		if (!bdata->dvfs_lock_status) {
-			int ret = 0;
-			ret = set_freq_limit(DVFS_TOUCH_ID,
-					MIN_TOUCH_LIMIT);
-			if (ret < 0)
-				printk(KERN_ERR
-					"%s: cpu first lock failed(%d)\n",
-					__func__, ret);
-
-			schedule_delayed_work(&bdata->work_dvfs_chg,
-				msecs_to_jiffies(KEY_BOOSTER_CHG_TIME));
-			bdata->dvfs_lock_status = true;
-		}
-	}
-	mutex_unlock(&bdata->dvfs_lock);
-}
-
-
-static int gpio_key_init_dvfs(struct gpio_button_data *bdata)
-{
-	mutex_init(&bdata->dvfs_lock);
-
-	INIT_DELAYED_WORK(&bdata->work_dvfs_off, gpio_key_set_dvfs_off);
-	INIT_DELAYED_WORK(&bdata->work_dvfs_chg, gpio_key_change_dvfs_lock);
-
-	bdata->dvfs_lock_status = false;
-	return 0;
-}
-#endif
-
 static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 {
 	const struct gpio_keys_button *button = bdata->button;
@@ -530,17 +441,7 @@ static void gpio_keys_gpio_work_func(struct work_struct *work)
 {
 	struct gpio_button_data *bdata =
 		container_of(work, struct gpio_button_data, work);
-#ifdef KEY_BOOSTER
-	const struct gpio_keys_button *button = bdata->button;
-	int state = (gpio_get_value_cansleep(button->gpio) ? 1 : 0) ^ button->active_low;
-#endif
 	gpio_keys_gpio_report_event(bdata);
-#ifdef KEY_BOOSTER
-	if (button->code == KEY_HOMEPAGE)
-	{
-		gpio_key_set_dvfs_lock(bdata, !!state);
-	}
-#endif
 }
 
 static void gpio_keys_gpio_timer(unsigned long _data)
@@ -715,27 +616,68 @@ fail:
 	return error;
 }
 
+
+#if defined(CONFIG_DUAL_LCD)
+int samsung_switching_lcd(int flip);
+int samsung_switching_tsp(int flip);
+int samsung_switching_tkey(int flip);
+int samsung_switching_ssp(int flip);
+#endif
+
 #ifdef CONFIG_SENSORS_HALL
+static int flip_status_before;
+
 #ifdef CONFIG_SEC_FACTORY
 static void flip_cover_work(struct work_struct *work)
 {
 	struct gpio_keys_drvdata *ddata =
 		container_of(work, struct gpio_keys_drvdata,
 				flip_cover_dwork.work);
+#if !defined (CONFIG_SEC_MILLET_PROJECT) || !defined (CONFIG_SEC_T8_PROJECT)
 	int comp_val[2]={0};
+#else
+	int comp_val[3]={0};
+#endif
 
 	comp_val[0] = gpio_get_value(ddata->gpio_flip_cover);
+#if !defined (CONFIG_SEC_MILLET_PROJECT) || !defined (CONFIG_SEC_T8_PROJECT)
 	mdelay(30);
+#else
+	mdelay(10);
+#endif
 	comp_val[1] = gpio_get_value(ddata->gpio_flip_cover);
+#if defined (CONFIG_SEC_MILLET_PROJECT) || defined (CONFIG_SEC_T8_PROJECT)
+	mdelay(10);
+	comp_val[2] = gpio_get_value(ddata->gpio_flip_cover);
+#endif
 
+#if !defined (CONFIG_SEC_MILLET_PROJECT) || !defined (CONFIG_SEC_T8_PROJECT)
 	if (comp_val[0] == comp_val[1]) {
-		ddata->flip_cover = gpio_get_value(ddata->gpio_flip_cover);
-		printk(KERN_DEBUG "[keys] %s : %d\n",
-			__func__, ddata->flip_cover);
+#else
+	if ((comp_val[0] == comp_val[1]) && (comp_val[0] == comp_val[2])) {
+#endif
+		if (ddata->flip_code == SW_LID)
+			ddata->flip_cover = !gpio_get_value(ddata->gpio_flip_cover);
+		else
+			ddata->flip_cover = gpio_get_value(ddata->gpio_flip_cover);
+
+		printk(KERN_DEBUG "[keys] %s : %d code 0x%x\n",
+			__func__, ddata->flip_cover, ddata->flip_code);
 
 		input_report_switch(ddata->input,
-			SW_LID, !ddata->flip_cover);
+			ddata->flip_code, ddata->flip_cover);
 		input_sync(ddata->input);
+
+		if (ddata->flip_cover != flip_status_before) {
+#if defined(CONFIG_DUAL_LCD)
+			samsung_switching_lcd(ddata->flip_cover);
+			samsung_switching_tsp(ddata->flip_cover);
+			samsung_switching_tkey(ddata->flip_cover);
+			samsung_switching_ssp(ddata->flip_cover);
+#endif
+		}
+
+		flip_status_before = ddata->flip_cover;
 	} else {
 		printk(KERN_DEBUG "%s : Value is not same!\n", __func__);
 	}
@@ -747,36 +689,96 @@ static void flip_cover_work(struct work_struct *work)
 		container_of(work, struct gpio_keys_drvdata,
 				flip_cover_dwork.work);
 
-	ddata->flip_cover = gpio_get_value(ddata->gpio_flip_cover);
-	printk(KERN_DEBUG "[keys] %s : %d\n",
-		__func__, ddata->flip_cover);
+	if (ddata->flip_code == SW_LID)
+		ddata->flip_cover = !gpio_get_value(ddata->gpio_flip_cover);
+	else
+		ddata->flip_cover = gpio_get_value(ddata->gpio_flip_cover);
+
+	printk(KERN_DEBUG "[keys] %s : %d code 0x%x\n",
+		__func__, ddata->flip_cover, ddata->flip_code);
 
 	input_report_switch(ddata->input,
-		SW_LID, !ddata->flip_cover);
+			ddata->flip_code, ddata->flip_cover);
 	input_sync(ddata->input);
+
+	if (ddata->flip_cover != flip_status_before) {
+#if defined(CONFIG_DUAL_LCD)
+		samsung_switching_lcd(ddata->flip_cover);
+		samsung_switching_tsp(ddata->flip_cover);
+		samsung_switching_tkey(ddata->flip_cover);
+		samsung_switching_ssp(ddata->flip_cover);
+#endif
+	}
+
+	flip_status_before = ddata->flip_cover;
 }
 #endif // CONFIG_SEC_FACTORY
 
+#if defined (CONFIG_SEC_MILLET_PROJECT) || defined (CONFIG_SEC_T8_PROJECT)
+static irqreturn_t flip_cover_detect(int irq, void *dev_id)
+{
+	struct gpio_keys_drvdata *ddata = dev_id;
+#define HALL_COMPARISONS 6
+	int comp_val[HALL_COMPARISONS]={0};
+	int i;
+
+	comp_val[0] = gpio_get_value(ddata->gpio_flip_cover);
+
+	if(comp_val[0]) {
+		wake_lock_timeout(&ddata->flip_wake_lock, HZ * 5 / 100); /* 50ms */
+	} else {
+		wake_unlock(&ddata->flip_wake_lock);
+	}
+
+	pr_info("[keys] %s flip_status : %d (%s)\n",
+		__func__, comp_val[0], comp_val[0]?"on":"off");
+
+	for(i=1;i<HALL_COMPARISONS;i++){
+		mdelay(6);
+		comp_val[i] = gpio_get_value(ddata->gpio_flip_cover);
+		if(comp_val[i]!=comp_val[0]){
+			pr_err("%s : Value is not same!\n", __func__);
+			goto out;
+		}
+	}
+
+	ddata->flip_cover = comp_val[0];
+	pr_info("[keys] hall ic reported value: %d (%s)\n",
+		ddata->flip_cover, ddata->flip_cover?"on":"off");
+
+	input_report_switch(ddata->input,
+		SW_FLIP, ddata->flip_cover);
+	input_sync(ddata->input);
+out:
+	return IRQ_HANDLED;
+}
+#else
 static irqreturn_t flip_cover_detect(int irq, void *dev_id)
 {
 	bool flip_status;
 	struct gpio_keys_drvdata *ddata = dev_id;
+#ifdef CONFIG_SENSORS_HALL_IRQ_CTRL
+	bool debounce_status;
+#endif
 #ifdef CONFIG_SENSORS_HALL_DEBOUNCE
 	int DTIME_IRQ, DTIME_WAKE;
 
 	/* Set Debounce time for HALL IC IRQ(wake_lock / IRQ recheck)
 	 * ON : 140ms / 70ms
-	 * OFF : 50ms / 10ms (default)
+	 * OFF : 50ms / 10ms
 	 */
 	DTIME_IRQ = ddata->debounce_set ? (HZ*7/100) : (HZ*1/100);
 	DTIME_WAKE = ddata->debounce_set ? (HZ*14/100) : (HZ*5/100);
 #endif
 
-	flip_status = gpio_get_value(ddata->gpio_flip_cover);
+	if (ddata->flip_code == SW_LID)
+		flip_status = !gpio_get_value(ddata->gpio_flip_cover);
+	else
+		flip_status = gpio_get_value(ddata->gpio_flip_cover);
 
 	cancel_delayed_work_sync(&ddata->flip_cover_dwork);
 #ifdef CONFIG_SENSORS_HALL_DEBOUNCE
-	printk(KERN_DEBUG "[keys] %s flip_status : %d, IRQt : %d, WAKEt : %d\n",
+	printk(KERN_DEBUG "[keys] %s flip_satatus : %d, IRQt : %d, WAKEt : %d\n",
 		__func__, flip_status, DTIME_IRQ, DTIME_WAKE);
 
 	if(flip_status) {
@@ -787,19 +789,32 @@ static irqreturn_t flip_cover_detect(int irq, void *dev_id)
 		wake_lock_timeout(&ddata->flip_wake_lock, HZ * DTIME_WAKE);
 		schedule_delayed_work(&ddata->flip_cover_dwork, DTIME_IRQ);
 	}
-#else
-	printk(KERN_DEBUG "[keys] %s flip_status : %d\n", __func__, flip_status);
+#else /* CONFIG_SENSORS_HALL_DEBOUNCE */
+	printk(KERN_DEBUG "[keys] %s flip_satatus : %d\n",
+		__func__, flip_status);
 
 	if(flip_status) {
 		wake_lock_timeout(&ddata->flip_wake_lock, HZ * 5 / 100); /* 50ms */
 		schedule_delayed_work(&ddata->flip_cover_dwork, HZ * 1 / 100); /* 10ms */
 	} else {
+#ifdef CONFIG_SENSORS_HALL_IRQ_CTRL
+	if (ddata->gsm_area) {
+		mdelay(7);
+		debounce_status = gpio_get_value(ddata->gpio_flip_cover);
+		if (debounce_status != flip_status) {
+			printk(KERN_DEBUG "[keys] %s filp ignore IRQ\n",
+				__func__);
+			return IRQ_HANDLED;
+		}
+	}
+#endif /* CONFIG_SENSORS_HALL_IRQ_CTRL */
 		wake_unlock(&ddata->flip_wake_lock);
 		schedule_delayed_work(&ddata->flip_cover_dwork, 0);
 	}
-#endif
+#endif /* CONFIG_SENSORS_HALL_DEBOUNCE */
 	return IRQ_HANDLED;
 }
+#endif
 #endif /* CONFIG_SENSORS_HALL */
 
 
@@ -850,6 +865,9 @@ static int gpio_keys_open(struct input_dev *input)
 	} else {
 		/* update the current status */
 		schedule_delayed_work(&ddata->flip_cover_dwork, HZ / 2);
+#ifdef CONFIG_SENSORS_HALL_IRQ_CTRL
+		ddata->irq_state =  true;
+#endif
 	}
 skip_flip:
 #endif
@@ -925,7 +943,7 @@ static ssize_t sysfs_hall_debounce_store(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR(hall_irq_ctrl, S_IRUGO | S_IWUGO,
+static DEVICE_ATTR(hall_irq_ctrl, 0660,
 			sysfs_hall_debounce_show,
 			sysfs_hall_debounce_store);
 #endif
@@ -1039,9 +1057,13 @@ static int gpio_keys_get_devtree_pdata(struct device *dev,
 
 		buttons[i].desc = of_get_property(pp, "label", NULL);
 #ifdef CONFIG_SENSORS_HALL
-		if (buttons[i].code == SW_FLIP) {
+		if ((buttons[i].code == SW_FLIP) || (buttons[i].code == SW_LID)) {
 			pdata->gpio_flip_cover = buttons[i].gpio;
+			pdata->flip_code = buttons[i].code;
 			pdata->nbuttons--;
+#ifdef CONFIG_SENSORS_HALL_IRQ_CTRL
+			pdata->workaround_set = (of_property_read_bool(pp, "hall_wa_disable") ? false : true);
+#endif
 			dev_info(dev, "[Hall_IC] device tree was founded\n");
 			continue;
 		}
@@ -1288,13 +1310,11 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 	struct input_dev *input;
 	int i, error;
 	int wakeup = 0;
-#ifdef CONFIG_SENSORS_HALL
-
-#if defined (CONFIG_SEC_MILLET_PROJECT) || defined (CONFIG_SEC_BERLUTI_PROJECT)
-struct regulator *lvs1_1p8 = NULL;
-#endif
 	int ret;
 	struct device *sec_key;
+#ifdef CONFIG_SEC_PATEK_PROJECT
+	struct device *sec_keypad;
+	struct device *sec_flip;
 #endif
 
 	if (!pdata) {
@@ -1323,8 +1343,9 @@ struct regulator *lvs1_1p8 = NULL;
 #endif
 #ifdef CONFIG_SENSORS_HALL
 
-#if defined (CONFIG_SEC_MILLET_PROJECT) || defined (CONFIG_SEC_BERLUTI_PROJECT)
-
+#if defined (CONFIG_SEC_MILLET_PROJECT) || defined (CONFIG_SEC_BERLUTI_PROJECT)\
+	|| defined (CONFIG_SEC_MATISSE_PROJECT)	|| defined (CONFIG_SEC_ATLANTIC_PROJECT)\
+    || defined (CONFIG_SEC_MEGA2_PROJECT) || defined (CONFIG_SEC_T8_PROJECT) || defined (CONFIG_SEC_T10_PROJECT) || defined(CONFIG_SEC_HESTIA_PROJECT)
 	ret = gpio_request(pdata->gpio_flip_cover,"HALL");
 	if(ret)
 		printk(KERN_CRIT "[HALL IC] gpio Request FAIL\n");
@@ -1333,11 +1354,16 @@ struct regulator *lvs1_1p8 = NULL;
 	}
 #endif
 	ddata->gpio_flip_cover = pdata->gpio_flip_cover;
+	ddata->flip_code = pdata->flip_code;
 	ddata->irq_flip_cover = gpio_to_irq(ddata->gpio_flip_cover);
 	wake_lock_init(&ddata->flip_wake_lock, WAKE_LOCK_SUSPEND,
 		"flip_wake_lock");
+	flip_status_before = -1;
 #endif
 	mutex_init(&ddata->disable_lock);
+#ifdef CONFIG_SENSORS_HALL_IRQ_CTRL
+	mutex_init(&ddata->irq_lock);
+#endif
 
 	platform_set_drvdata(pdev, ddata);
 	input_set_drvdata(input, ddata);
@@ -1348,8 +1374,14 @@ struct regulator *lvs1_1p8 = NULL;
 #ifdef CONFIG_SENSORS_HALL
 	if(ddata->gpio_flip_cover != 0) {
 		input->evbit[0] |= BIT_MASK(EV_SW);
-		input_set_capability(input, EV_SW, SW_LID);
+		input_set_capability(input, EV_SW, ddata->flip_code);
 	}
+#endif
+#ifdef CONFIG_SENSORS_HALL_IRQ_CTRL
+	ddata->gsm_area = false;
+	ddata->cover_state = false;
+	ddata->workaround_set = pdata->workaround_set;
+	drv_data = ddata;
 #endif
 #ifdef CONFIG_SENSORS_HALL_DEBOUNCE
 	ddata->debounce_set = false;
@@ -1373,13 +1405,6 @@ struct regulator *lvs1_1p8 = NULL;
 		error = gpio_keys_setup_key(pdev, input, bdata, button);
 		if (error)
 			goto fail2;
-#ifdef KEY_BOOSTER
-		error = gpio_key_init_dvfs(bdata);
-		if (error < 0) {
-			dev_err(dev, "Fail get dvfs level for touch booster\n");
-			goto fail2;
-		}
-#endif
 		if (button->wakeup)
 			wakeup = 1;
 	}
@@ -1406,18 +1431,34 @@ struct regulator *lvs1_1p8 = NULL;
 	}
 	input_sync(input);
 
-#ifdef CONFIG_SENSORS_HALL
 	sec_key = device_create(sec_class, NULL, 0, NULL, "sec_key");
 	if (IS_ERR(sec_key))
 		pr_err("Failed to create device(sec_key)!\n");
+
+#ifdef CONFIG_SEC_PATEK_PROJECT
+	sec_keypad=device_create(sec_class, NULL, 0, NULL, "sec_keypad");
+	if (device_create_file(sec_keypad, &dev_attr_brightness) < 0)
+		pr_err("Failed to create device file(%s)!\n", dev_attr_brightness.attr.name);
+
+	sec_flip = device_create(sec_class, NULL, 0, NULL, "sec_flip");
+	if (device_create_file(sec_flip, &dev_attr_flipStatus) < 0)
+		pr_err("Failed to create device file(%s)!\n", dev_attr_flipStatus.attr.name);
+#endif
 
 	ret = device_create_file(sec_key, &dev_attr_sec_key_pressed);
 	if (ret) {
 		pr_err("Failed to create device file in sysfs entries(%s)!\n",
 				dev_attr_sec_key_pressed.attr.name);
 	}
+#if defined(CONFIG_SEC_S_PROJECT)
+	ret = device_create_file(sec_key, &dev_attr_sec_key_pressed_code);
+	if (ret) {
+		pr_err("Failed to create device file in sysfs entries(%s)!\n",
+				dev_attr_sec_key_pressed_code.attr.name);
+	}
+#endif
 
-#if defined(CONFIG_SENSORS_HALL_DEBOUNCE)
+#ifdef CONFIG_SENSORS_HALL_IRQ_CTRL
 	if(ddata->gpio_flip_cover != 0) {
 		ret = device_create_file(sec_key, &dev_attr_hall_irq_ctrl);
 		if (ret < 0) {
@@ -1434,29 +1475,60 @@ struct regulator *lvs1_1p8 = NULL;
 				dev_attr_hall_detect.attr.name, ret);
 		}
 	}
-#if defined (CONFIG_SEC_MILLET_PROJECT) || defined (CONFIG_SEC_BERLUTI_PROJECT)
+#if defined(CONFIG_SENSORS_HALL_DEBOUNCE)
+	if(ddata->gpio_flip_cover != 0) {
+		ret = device_create_file(sec_key, &dev_attr_hall_irq_ctrl);
+		if (ret < 0) {
+			pr_err("Failed to create device file(%s)!, error: %d\n",
+				dev_attr_hall_irq_ctrl.attr.name, ret);
+		}
+	}
+#endif
+#if defined (CONFIG_SEC_MILLET_PROJECT) || defined (CONFIG_SEC_BERLUTI_PROJECT) ||  defined (CONFIG_SEC_T8_PROJECT)
 	if (!lvs1_1p8) {
 		lvs1_1p8 = regulator_get(dev, "8226_lvs1");
 		if(!lvs1_1p8)
 			printk(KERN_CRIT "%s: regulator_get for 8226_lvs1 failed\n", __func__);
 		else {
 			ret = regulator_enable(lvs1_1p8);
-			if (ret)
+			if (ret){
+				regulator_put(lvs1_1p8);
 				printk(KERN_CRIT "%s: Failed to enable regulator lvs1_1p8.\n",__func__);
+			}
 		}
 	}
 #endif
 
 #endif
 
+#ifdef CONFIG_USE_VM_KEYBOARD_REJECT
+	reject_keyboard_specific_key = false;
+	ret = device_create_file(sec_key, &dev_attr_reject_key_comb);
+	if (ret < 0) {
+		pr_err("Failed to create device file(%s), error: %d\n",
+				dev_attr_reject_key_comb.attr.name, ret);
+	}
+#endif
 	ret = device_create_file(sec_key, &dev_attr_wakeup_keys);
 	if (ret < 0) {
 		pr_err("Failed to create device file(%s), error: %d\n",
 				dev_attr_wakeup_keys.attr.name, ret);
 	}
 	dev_set_drvdata(sec_key, ddata);
-#endif
+
 	device_init_wakeup(&pdev->dev, wakeup);
+
+#if defined(CONFIG_SEC_PATEK_PROJECT)
+	keypadled_powerset(&pdev->dev);
+	dev_set_drvdata(sec_flip, ddata);
+#endif
+
+#ifdef PERIODIC_CHECK_GPIOS
+    INIT_DELAYED_WORK_DEFERRABLE(&g_gpio_check_work,
+            sec_gpiocheck_work);
+    schedule_delayed_work(&g_gpio_check_work,
+            msecs_to_jiffies(0));
+#endif
 
 	return 0;
 
@@ -1497,6 +1569,10 @@ static int __devexit gpio_keys_remove(struct platform_device *pdev)
 
 #ifdef CONFIG_SENSORS_HALL
 	wake_lock_destroy(&ddata->flip_wake_lock);
+#if defined CONFIG_SEC_MILLET_PROJECT || defined (CONFIG_SEC_BERLUTI_PROJECT) || defined (CONFIG_SEC_T8_PROJECT)
+	regulator_disable(lvs1_1p8);
+	regulator_put(lvs1_1p8);
+#endif
 #endif
 	/*
 	 * If we had no platform_data, we allocated buttons dynamically, and
@@ -1524,12 +1600,17 @@ static int gpio_keys_suspend(struct device *dev)
 				enable_irq_wake(bdata->irq);
 		}
 #ifdef CONFIG_SENSORS_HALL
-	if(ddata->gpio_flip_cover != 0)
-		enable_irq_wake(ddata->irq_flip_cover);
+	if(ddata->gpio_flip_cover != 0) {
+#ifdef CONFIG_SENSORS_HALL_IRQ_CTRL
+		if (!ddata->cover_state && ddata->gsm_area)
+			disable_irq_wake(ddata->irq_flip_cover);
+		else
+#endif
+			enable_irq_wake(ddata->irq_flip_cover);
+	}
 #endif
 	}
-
-	return 0;
+		return 0;
 }
 
 static int gpio_keys_resume(struct device *dev)
@@ -1543,13 +1624,19 @@ static int gpio_keys_resume(struct device *dev)
 			disable_irq_wake(bdata->irq);
 
 		if (gpio_is_valid(bdata->button->gpio))
-			gpio_keys_gpio_report_event(bdata);
+		{
+			if(!(bdata->button->code == 172))
+				gpio_keys_gpio_report_event(bdata);
+		}
 	}
 #ifdef CONFIG_SENSORS_HALL
-#ifdef disable_irq_wake
-	if (device_may_wakeup(dev) && ddata->gpio_flip_cover != 0)
+	if (device_may_wakeup(dev) && ddata->gpio_flip_cover != 0) {
 		disable_irq_wake(ddata->irq_flip_cover);
+#ifdef CONFIG_SENSORS_HALL_IRQ_CTRL
+		if (ddata->cover_state && ddata->gsm_area)
+			gpio_hall_irq_set(enable, false);
 #endif
+	}
 #endif
 	input_sync(ddata->input);
 
