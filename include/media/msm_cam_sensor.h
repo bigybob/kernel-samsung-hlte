@@ -48,8 +48,6 @@
 
 #define MAX_EEPROM_NAME 32
 
-#define MAX_EEPROM_NAME 32
-
 #define MAX_NUMBER_OF_STEPS 47
 #define MAX_POWER_CONFIG 12
 
