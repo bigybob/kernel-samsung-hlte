@@ -161,7 +161,7 @@ config ARM_TICKET_LOCKS
 
 config RWSEM_GENERIC_SPINLOCK
 	bool
-	default y
+	default n
 
 config RWSEM_XCHGADD_ALGORITHM
 	def_bool y
