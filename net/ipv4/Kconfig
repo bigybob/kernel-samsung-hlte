@@ -602,14 +602,10 @@ endchoice
 
 endif
 
-config TCP_CONG_CUBIC
+config TCP_CONG_WESTWOOD
 	tristate
 	depends on !TCP_CONG_ADVANCED
-	default n
-
-config TCP_CONG_WESTWOOD
-        tristate "TCP Westwood+"
-        default y
+	default y
 
 config DEFAULT_TCP_CONG
 	string
@@ -621,7 +617,7 @@ config DEFAULT_TCP_CONG
 	default "westwood" if DEFAULT_WESTWOOD
 	default "veno" if DEFAULT_VENO
 	default "reno" if DEFAULT_RENO
-	default "cubic"
+	default "westwood"
 
 config TCP_MD5SIG
 	bool "TCP: MD5 Signature Option support (RFC2385) (EXPERIMENTAL)"
