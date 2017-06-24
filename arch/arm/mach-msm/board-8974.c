@@ -19,7 +19,6 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
-#include <linux/persistent_ram.h>
 #include <linux/memory.h>
 #include <linux/regulator/machine.h>
 #include <linux/regulator/krait-regulator.h>
@@ -46,6 +45,9 @@
 #include <mach/socinfo.h>
 #include <mach/msm_smem.h>
 #include <linux/module.h>
+#ifdef CONFIG_ANDROID_PERSISTENT_RAM
+#include <linux/persistent_ram.h>
+#endif
 
 #include "board-dt.h"
 #include "clock.h"
@@ -103,6 +105,41 @@ extern int msm_show_resume_irq_mask;
 #ifdef CONFIG_SEC_PATEK_PROJECT
 #include "board-patek-keypad.c"
 #endif
+
+#ifdef CONFIG_ANDROID_PERSISTENT_RAM
+/* CONFIG_SEC_DEBUG reserving memory for persistent RAM*/
+#define PERSISTENT_RAM_BASE 0x7FA00000
+#define PERSISTENT_RAM_SIZE SZ_1M
+#define RAM_CONSOLE_SIZE (124*SZ_1K * 2)
+
+static struct persistent_ram_descriptor per_ram_descs[] __initdata = {
+#ifdef CONFIG_ANDROID_RAM_CONSOLE
+{
+	.name = "ram_console",
+	.size = RAM_CONSOLE_SIZE,
+}
+#endif /* CONFIG_ANDROID_RAM_CONSOLE */
+};
+
+static struct persistent_ram per_ram __initdata = {
+	.descs = per_ram_descs,
+	.num_descs = ARRAY_SIZE(per_ram_descs),
+	.start = PERSISTENT_RAM_BASE,
+	.size = PERSISTENT_RAM_SIZE
+};
+
+#ifdef CONFIG_ANDROID_RAM_CONSOLE
+static struct platform_device ram_console_device = {
+        .name = "ram_console",
+        .id = -1,
+};
+
+void __init add_ramconsole_devices(void)
+{
+    platform_device_register(&ram_console_device);
+}
+#endif /* CONFIG_ANDROID_RAM_CONSOLE */
+#endif /* CONFIG_ANDROID_PERSISTENT_RAM */
 
 extern int poweroff_charging;
 
@@ -361,6 +398,9 @@ MAX77826_VREG_INIT(LDO8, 1800000, 3300000, 0);
 #if defined(CONFIG_SEC_PATEK_PROJECT)
 MAX77826_VREG_INIT(LDO9, 1800000, 1800000, 0);
 MAX77826_VREG_INIT(LDO10, 2950000, 2950000, 0);
+#elif defined(CONFIG_MACH_CHAGALL_KDI)
+MAX77826_VREG_INIT(LDO9, 1000000, 3000000, 0);
+MAX77826_VREG_INIT(LDO10, 2800000, 2950000, 0);
 #else
 MAX77826_VREG_INIT(LDO9, 1800000, 1800000, 0);
 MAX77826_VREG_INIT(LDO10, 2800000, 2950000, 0);
@@ -442,53 +482,14 @@ static struct reserve_info msm8974_reserve_info __initdata = {
 	.paddr_to_memtype = msm8974_paddr_to_memtype,
 };
 
-#define PERSISTENT_RAM_BASE 0x1FB00000
-#define PERSISTENT_RAM_SIZE SZ_1M
-#define RAM_CONSOLE_SIZE (124*SZ_1K * 2)
-
-#ifdef CONFIG_ANDROID_PERSISTENT_RAM
-static struct persistent_ram_descriptor pram_descs[] = {
-#ifdef CONFIG_ANDROID_RAM_CONSOLE
-        {
-                .name = "ram_console",
-                .size = RAM_CONSOLE_SIZE,
-        },
-#endif
-};
-
-static struct persistent_ram msm8974_persistent_ram = {
-        .start = PERSISTENT_RAM_BASE,
-        .size = PERSISTENT_RAM_SIZE,
-        .num_descs = ARRAY_SIZE(pram_descs),
-        .descs = pram_descs,
-};
-
-void __init add_persistent_ram(void)
-{
-    persistent_ram_early_init(&msm8974_persistent_ram);
-}
-#endif
-
-#ifdef CONFIG_ANDROID_RAM_CONSOLE
-static struct platform_device ram_console_device = {
-        .name = "ram_console",
-        .id = -1,
-};
-
-void __init add_ramconsole_devices(void)
-{
-    platform_device_register(&ram_console_device);
-}
-#endif /* CONFIG_ANDROID_RAM_CONSOLE */
-
 void __init msm_8974_reserve(void)
 {
 	reserve_info = &msm8974_reserve_info;
 	of_scan_flat_dt(dt_scan_for_memory_reserve, msm8974_reserve_table);
-	msm_reserve();
-#ifdef CONFIG_ANDROID_RAM_CONSOLE
-	add_persistent_ram();
+#ifdef CONFIG_ANDROID_PERSISTENT_RAM
+	persistent_ram_early_init(&per_ram);
 #endif
+	msm_reserve();
 }
 
 static void __init msm8974_early_memory(void)
@@ -560,7 +561,7 @@ void __init msm8974_add_drivers(void)
 		msm_clock_init(&msm8974_clock_init_data);
 	tsens_tm_init_driver();
 #ifdef CONFIG_INTELLI_THERMAL
-	msm_thermal_init(NULL);
+	   msm_thermal_init(NULL);
 #else
 	msm_thermal_device_init();
 #endif
