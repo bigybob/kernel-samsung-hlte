@@ -212,7 +212,7 @@ static inline void mdss_mdp_cmd_clk_on(struct mdss_mdp_cmd_ctx *ctx)
 {
 	unsigned long flags;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
-	int rc;
+	int irq_en, rc;
 
 	if (!ctx->panel_on) {
 		pr_info("%s: Ignore clock on because the unblank does not finished\n", __func__);
@@ -252,10 +252,13 @@ static inline void mdss_mdp_cmd_clk_on(struct mdss_mdp_cmd_ctx *ctx)
 		mdss_mdp_hist_intr_setup(&mdata->hist_intr, MDSS_IRQ_RESUME);
 	}
 	spin_lock_irqsave(&ctx->clk_lock, flags);
-	if (!ctx->rdptr_enabled)
-		mdss_mdp_irq_enable(MDSS_MDP_IRQ_PING_PONG_RD_PTR, ctx->pp_num);
+	irq_en =  !ctx->rdptr_enabled;
 	ctx->rdptr_enabled = VSYNC_EXPIRE_TICK;
 	spin_unlock_irqrestore(&ctx->clk_lock, flags);
+
+	if (irq_en)
+		mdss_mdp_irq_enable(MDSS_MDP_IRQ_PING_PONG_RD_PTR, ctx->pp_num);
+		
 	mutex_unlock(&ctx->clk_mtx);
 }
 
@@ -576,6 +579,7 @@ static void clk_ctrl_work(struct work_struct *work)
 static void __mdss_mdp_cmd_ulps_work(struct work_struct *work)
 {
 	struct delayed_work *dw = to_delayed_work(work);
+	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	struct mdss_mdp_cmd_ctx *ctx =
 		container_of(dw, struct mdss_mdp_cmd_ctx, ulps_work);
 
@@ -592,8 +596,11 @@ static void __mdss_mdp_cmd_ulps_work(struct work_struct *work)
 	if (!mdss_mdp_ctl_intf_event(ctx->ctl, MDSS_EVENT_DSI_ULPS_CTRL,
 		(void *)1)) {
 		ctx->ulps = true;
-		ctx->ctl->play_cnt = 0;
-		mdss_mdp_footswitch_ctrl_ulps(0, &ctx->ctl->mfd->pdev->dev);
+		if (mdata->idle_pc_enabled) {
+			ctx->ctl->play_cnt = 0;
+			mdss_mdp_footswitch_ctrl_idle_pc(0,
+					&ctx->ctl->mfd->pdev->dev);
+		}
 	}
 }
 
@@ -711,7 +718,6 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 	struct mdss_panel_data *pdata;
 	unsigned long flags;
 	int rc = 0;
-	int flush_wq = (int) arg;
 
 	ctx = (struct mdss_mdp_cmd_ctx *) ctl->priv_data;
 	if (!ctx) {
@@ -720,10 +726,6 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 	}
 
 	pdata = ctl->panel_data;
-
-#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
-	xlog(__func__, ctl->num, atomic_read(&ctx->koff_cnt), ctx->clk_enabled, ctx->rdptr_enabled, ctl->roi_bkup.w, ctl->roi_bkup.h);
-#endif
 
 	ctl->roi_bkup.w = ctl->width;
 	ctl->roi_bkup.h = ctl->height;
@@ -755,7 +757,6 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 			local_irq_restore(flags);
 			rc = 1;
 		}
-
 		rc = atomic_read(&ctx->koff_cnt) == 0;
 	}
 
@@ -765,8 +766,19 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 					rc, ctl->num);
 			mdss_dsi_debug_check_te(pdata);
 			MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0", "dsi1",
-					"edp", "hdmi", "panic");
-		}
+						"edp", "hdmi", "panic");
+                }
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+			dumpreg();
+			mdp5_dump_regs();
+			mdss_mdp_debug_bus();
+			xlog_dump();
+#if 0
+			mdss_mdp_cmd_pingpong_recovery(ctx);
+#else
+			panic("Pingpong Timeout");
+#endif
+#endif
 		ctx->pp_timeout_report_cnt++;
 		rc = -EPERM;
 		mdss_mdp_ctl_notify(ctl, MDP_NOTIFY_FRAME_TIMEOUT);
@@ -785,9 +797,6 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 
 	MDSS_XLOG(ctl->num, atomic_read(&ctx->koff_cnt), ctx->clk_enabled,
 			ctx->rdptr_enabled, rc);
-
-	if (flush_wq)
-		flush_work_sync(&ctx->pp_done_work);
 
 	return rc;
 }
@@ -898,12 +907,7 @@ int mdss_mdp_cmd_kickoff(struct mdss_mdp_ctl *ctl, void *arg)
 	 * tx dcs command if had any
 	 */
 	mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_DSI_CMDLIST_KOFF, NULL);
-
 	mdss_mdp_cmd_set_sync_ctx(ctl, NULL);
-
-#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
-	xlog(__func__, ctl->num,  atomic_read(&ctx->koff_cnt), ctx->clk_enabled, ctx->rdptr_enabled, 0, 0);
-#endif
 	mdss_mdp_irq_enable(MDSS_MDP_IRQ_PING_PONG_COMP, ctx->pp_num);
 	mdss_mdp_ctl_write(ctl, MDSS_MDP_REG_CTL_START, 1);
 	mdss_mdp_ctl_perf_set_transaction_status(ctl,
@@ -981,16 +985,10 @@ int mdss_mdp_cmd_stop(struct mdss_mdp_ctl *ctl)
 					(MDSS_MDP_IRQ_PING_PONG_RD_PTR,
 							ctx->pp_num);
 				ctx->rdptr_enabled = 0;
+				
 			}
 		}
 	}
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQXGA_S6E3HA1_PT_PANEL)
-	if (!board_rev) {
-		mdss_mdp_irq_disable(MDSS_MDP_IRQ_PING_PONG_RD_PTR, ctx->pp_num);
-		if (ctx->rdptr_enabled)
-			ctx->rdptr_enabled = 0;
-	}
-#endif
 
 	if (cancel_work_sync(&ctx->clk_work))
 		pr_debug("no pending clk work\n");

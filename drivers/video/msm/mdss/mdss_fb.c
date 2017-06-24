@@ -76,10 +76,8 @@ static u32 mdss_fb_pseudo_palette[16] = {
 };
 
 #ifdef CONFIG_FB_MSM_CAMERA_CSC
-#if defined(CONFIG_SEC_KS01_PROJECT) || defined(CONFIG_SEC_ATLANTIC_PROJECT)
-u8 prev_csc_update = 1;
-#endif
 u8 csc_update = 1;
+u8 csc_change = 0;
 #endif
 
 #if (defined(CONFIG_MACH_S3VE3G_EUR) || defined(CONFIG_MACH_VICTOR3GDSDTV_LTN)) && defined(CONFIG_ESD_ERR_FG_RECOVERY)
@@ -297,7 +295,9 @@ static ssize_t csc_write_cfg(struct device *dev,
 	if (err)
 	       return ret;
 
-	csc_update = !!(u8)mode;
+	csc_update = (u8)mode;
+	csc_change = 1;
+	pr_info(" csc ctrl set to csc_update(%d)\n", csc_update);
 
 	pr_info("%s: csc ctrl set to %d \n", __func__, mode);
 
@@ -565,8 +565,8 @@ static ssize_t mdss_fb_get_panel_info(struct device *dev,
 			"pu_en=%d\nxstart=%d\nwalign=%d\nystart=%d\nhalign=%d\n"
 			"min_w=%d\nmin_h=%d\ndyn_fps_en=%d\nmin_fps=%d\n"
 			"max_fps=%d\n",
-			pinfo->partial_update_enabled, pinfo->xstart_pix_align,
-			pinfo->width_pix_align, pinfo->ystart_pix_align,
+ 			pinfo->partial_update_enabled, pinfo->xstart_pix_align,
+ 			pinfo->width_pix_align, pinfo->ystart_pix_align,
 			pinfo->height_pix_align, pinfo->min_width,
 			pinfo->min_height, pinfo->dynamic_fps,
 			pinfo->min_fps, pinfo->max_fps);
@@ -750,7 +750,7 @@ static int mdss_fb_probe(struct platform_device *pdev)
 #else
 	mfd->bl_min_lvl = 0;
 #endif
-	mfd->ad_bl_level = 0;
+        mfd->ad_bl_level = 0;
 	mfd->fb_imgType = MDP_RGBA_8888;
 
 	mfd->pdev = pdev;
@@ -1120,12 +1120,13 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 		 */
 		if (mfd->bl_level_scaled == temp) {
 			mfd->bl_level = bkl_lvl;
-		} else {
-			pr_debug("backlight sent to panel :%d\n", temp);
-			pdata->set_backlight(pdata, temp);
-			mfd->bl_level = bkl_lvl;
-			mfd->bl_level_scaled = temp;
+			return;
 		}
+		if(mfd->panel_power_on == true)
+		   pdata->set_backlight(pdata, temp);
+		mfd->bl_level = bkl_lvl;
+		mfd->bl_level_scaled = temp;
+
 	}
 }
 
@@ -1139,24 +1140,27 @@ void mdss_fb_update_backlight(struct msm_fb_data_type *mfd)
 
 	if (mfd->unset_bl_level) {
 		mutex_lock(&mfd->bl_lock);
-		if (!mfd->bl_updated) {
+			if (!mfd->bl_updated) {
 			pdata = dev_get_platdata(&mfd->pdev->dev);
-			if ((pdata) && (pdata->set_backlight)) {
+		if ((pdata) && (pdata->set_backlight)) {
 #if defined(CONFIG_MACH_KANAS3G_CTC)
-				pr_info("[TSP]extend 200ms delay from LCD backlight\n");
-				msleep(100);
+			pr_info("[TSP]extend 200ms delay from LCD backlight\n");
+			msleep(100);
 #endif
-				mfd->bl_level = mfd->unset_bl_level;
-				temp = mfd->bl_level;
-				if (mfd->mdp.ad_calc_bl)
-					(*mfd->mdp.ad_calc_bl)(mfd, temp, &temp,
-								&bl_notify);
-				if (bl_notify)
-					mdss_fb_bl_update_notify(mfd);
-				pdata->set_backlight(pdata, temp);
-				mfd->bl_level_scaled = mfd->unset_bl_level;
-				mfd->bl_updated = 1;
-			}
+			mfd->bl_level = mfd->unset_bl_level;
+			temp = mfd->bl_level;
+			if (mfd->mdp.ad_calc_bl)
+				(*mfd->mdp.ad_calc_bl)(mfd, temp, &temp,
+						&bl_notify);
+			if (bl_notify)
+				mdss_fb_bl_update_notify(mfd);
+
+			pr_info("mfd->bl_level (%d), bl_updated (%d)\n",
+				mfd->bl_level, mfd->bl_updated);
+			pdata->set_backlight(pdata, temp);
+			mfd->bl_level_scaled = mfd->unset_bl_level;
+			mfd->bl_updated = 1;
+		}
 		}
 		mutex_unlock(&mfd->bl_lock);
 	}
@@ -1200,13 +1204,14 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 				schedule_delayed_work(&mfd->idle_notify_work,
 					msecs_to_jiffies(mfd->idle_time));
 		}
-
+#if 0
 		mutex_lock(&mfd->bl_lock);
 		if (!mfd->bl_updated) {
 			mfd->bl_updated = 1;
 			mdss_fb_set_backlight(mfd, mfd->unset_bl_level);
 		}
 		mutex_unlock(&mfd->bl_lock);
+#endif
 		break;
 
 	case FB_BLANK_VSYNC_SUSPEND:
@@ -1229,7 +1234,11 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 			mfd->op_enable = false;
 			curr_pwr_state = mfd->panel_power_on;
 			mutex_lock(&mfd->bl_lock);
+#if 1
+			pr_debug("%s skip mdss_fb_set_backlight\n", __func__);
+#else
 			mdss_fb_set_backlight(mfd, 0);
+#endif
 			mfd->panel_power_on = false;
 			mfd->bl_updated = 0;
 			mutex_unlock(&mfd->bl_lock);
@@ -1662,6 +1671,7 @@ static int mdss_fb_alloc_fbmem_iommu(struct msm_fb_data_type *mfd, int dom)
 		/* Normal Booting */
 		mfd->fbi->screen_base = NULL;
 		mfd->fbi->fix.smem_start = 0;
+		mfd->fbi->fix.smem_len = size;
 		return 0;
 	} else {
 		of_property_read_u32(pdev->dev.of_node,
@@ -2540,14 +2550,10 @@ static int __mdss_fb_display_thread(void *data)
 				mfd->index);
 
 	while (1) {
-		ret = wait_event_interruptible(mfd->commit_wait_q,
+		ATRACE_BEGIN(__func__);
+		wait_event(mfd->commit_wait_q,
 				(atomic_read(&mfd->commits_pending) ||
 				 kthread_should_stop()));
-
-		if (ret) {
-			pr_info("%s: interrupted", __func__);
-			continue;
-		}
 
 		if (kthread_should_stop())
 			break;
@@ -2555,6 +2561,7 @@ static int __mdss_fb_display_thread(void *data)
 		ret = __mdss_fb_perform_commit(mfd);
 		atomic_dec(&mfd->commits_pending);
 		wake_up_all(&mfd->idle_wait_q);
+		ATRACE_END(__func__);
 	}
 
 	atomic_set(&mfd->commits_pending, 0);
@@ -2945,8 +2952,6 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		goto buf_sync_err_2;
 	}
 
-	sync_fence_install(rel_fence, rel_fen_fd);
-
 	ret = copy_to_user(buf_sync->rel_fen_fd, &rel_fen_fd, sizeof(int));
 	if (ret) {
 		pr_err("%s: copy_to_user failed\n", sync_pt_data->fence_name);
@@ -2983,8 +2988,6 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		goto buf_sync_err_3;
 	}
 
-	sync_fence_install(retire_fence, retire_fen_fd);
-
 	ret = copy_to_user(buf_sync->retire_fen_fd, &retire_fen_fd,
 			sizeof(int));
 	if (ret) {
@@ -2995,7 +2998,11 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		goto buf_sync_err_3;
 	}
 
+	sync_fence_install(retire_fence, retire_fen_fd);
+
 skip_retire_fence:
+	sync_fence_install(rel_fence, rel_fen_fd);
+
 	mutex_unlock(&sync_pt_data->sync_mutex);
 
 	if (buf_sync->flags & MDP_BUF_SYNC_FLAG_WAIT)
@@ -3339,9 +3346,6 @@ int mdss_fb_suspres_panel(struct device *dev, void *data)
 	}
 	mfd = dev_get_drvdata(dev);
 	if (!mfd)
-		return 0;
-
-	if (mfd->index == 1)
 		return 0;
 
 	event = *((bool *) data) ? MDSS_EVENT_RESUME : MDSS_EVENT_SUSPEND;

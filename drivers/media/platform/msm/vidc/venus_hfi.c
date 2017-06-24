@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -668,7 +668,7 @@ static int venus_hfi_unvote_bus(void *dev,
 	struct venus_hfi_device *device = dev;
 
 	if (!device) {
-		dprintk(VIDC_ERR, "%s invalid device handle %pK",
+		dprintk(VIDC_ERR, "%s invalid device handle %p",
 			__func__, device);
 		return -EINVAL;
 	}
@@ -765,7 +765,7 @@ static int venus_hfi_scale_bus(void *dev, int load,
 	int bus_vector = 0;
 
 	if (!device) {
-		dprintk(VIDC_ERR, "%s invalid device handle %pK",
+		dprintk(VIDC_ERR, "%s invalid device handle %p",
 			__func__, device);
 		return -EINVAL;
 	}
@@ -1167,7 +1167,7 @@ static inline int venus_hfi_clk_enable(struct venus_hfi_device *device)
 	struct venus_core_clock *cl;
 
 	if (!device) {
-		dprintk(VIDC_ERR, "Invalid params: %pK\n", device);
+		dprintk(VIDC_ERR, "Invalid params: %p\n", device);
 		return -EINVAL;
 	}
 	WARN(!mutex_is_locked(&device->clk_pwr_lock),
@@ -1214,7 +1214,7 @@ static inline void venus_hfi_clk_disable(struct venus_hfi_device *device)
 	struct venus_core_clock *cl;
 
 	if (!device) {
-		dprintk(VIDC_ERR, "Invalid params: %pK\n", device);
+		dprintk(VIDC_ERR, "Invalid params: %p\n", device);
 		return;
 	}
 	WARN(!mutex_is_locked(&device->clk_pwr_lock),
@@ -1359,13 +1359,6 @@ static inline int venus_hfi_power_on(struct venus_hfi_device *device)
 		goto err_iommu_attach;
 	}
 
-	/* Reboot the firmware */
-	rc = venus_hfi_tzbsp_set_video_state(TZBSP_VIDEO_STATE_RESUME);
-	if (rc) {
-		dprintk(VIDC_ERR, "Failed to resume video core %d\n", rc);
-		goto err_set_video_state;
-	}
-
 	/*
 	 * Re-program all of the registers that get reset as a result of
 	 * regulator_disable() and _enable()
@@ -1386,6 +1379,13 @@ static inline int venus_hfi_power_on(struct venus_hfi_device *device)
 	if (!IS_ERR_OR_NULL(device->qdss.align_device_addr))
 		venus_hfi_write_register(device, VIDC_MMAP_ADDR,
 				(u32)device->qdss.align_device_addr, 0);
+
+	/* Reboot the firmware */
+	rc = venus_hfi_tzbsp_set_video_state(TZBSP_VIDEO_STATE_RESUME);
+	if (rc) {
+		dprintk(VIDC_ERR, "Failed to resume video core %d\n", rc);
+		goto err_set_video_state;
+	}
 
 	/* Wait for boot completion */
 	rc = venus_hfi_reset_core(device);
@@ -1510,7 +1510,7 @@ static int venus_hfi_scale_clocks(void *dev, int load)
 	int rc = 0;
 	struct venus_hfi_device *device = dev;
 	if (!device) {
-		dprintk(VIDC_ERR, "Invalid args: %pK\n", device);
+		dprintk(VIDC_ERR, "Invalid args: %p\n", device);
 		return -EINVAL;
 	}
 	device->clk_load = load;
@@ -1982,7 +1982,6 @@ static int venus_hfi_core_init(void *device)
 	VENUS_SET_STATE(dev, VENUS_STATE_INIT);
 
 	dev->intr_status = 0;
-	INIT_LIST_HEAD(&dev->sess_head);
 	venus_hfi_set_registers(dev);
 
 	if (!dev->hal_client) {
@@ -2150,7 +2149,7 @@ static void venus_hfi_core_clear_interrupt(struct venus_hfi_device *device)
 	int rc = 0;
 
 	if (!device) {
-		dprintk(VIDC_ERR, "%s Invalid paramter: %pK\n",
+		dprintk(VIDC_ERR, "%s Invalid paramter: %p\n",
 			__func__, device);
 		return;
 	}
@@ -2508,7 +2507,7 @@ static int venus_hfi_session_clean(void *session)
 	}
 	sess_close = session;
 	device = sess_close->device;
-	dprintk(VIDC_DBG, "deleted the session: 0x%pK",
+	dprintk(VIDC_DBG, "deleted the session: 0x%p",
 			sess_close);
 	mutex_lock(&device->session_lock);
 	list_del(&sess_close->list);
@@ -3766,7 +3765,8 @@ static void venus_hfi_unload_fw(void *dev)
 		return;
 	}
 	if (device->resources.fw.cookie) {
-		flush_workqueue(device->vidc_workq);
+		if (device->state != VENUS_STATE_DEINIT)
+			flush_workqueue(device->vidc_workq);
 		flush_workqueue(device->venus_pm_workq);
 		subsystem_put(device->resources.fw.cookie);
 		venus_hfi_interface_queues_release(dev);
@@ -3927,6 +3927,7 @@ static void *venus_hfi_add_device(u32 device_id,
 	mutex_init(&hdevice->session_lock);
 	mutex_init(&hdevice->clk_pwr_lock);
 
+	INIT_LIST_HEAD(&hdevice->sess_head);
 	if (hal_ctxt.dev_count == 0)
 		INIT_LIST_HEAD(&hal_ctxt.dev_head);
 
