@@ -735,7 +735,7 @@ int msm_vdec_reqbufs(struct msm_vidc_inst *inst, struct v4l2_requestbuffers *b)
 	rc = vb2_reqbufs(&q->vb2_bufq, b);
 	mutex_unlock(&q->lock);
 	if (rc)
-		dprintk(VIDC_DBG, "Failed to get reqbufs, %d\n", rc);
+		dprintk(VIDC_ERR, "Failed to get reqbufs, %d\n", rc);
 	return rc;
 }
 
@@ -1210,6 +1210,7 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 				"Failed to get buffer requirements: %d\n", rc);
 			break;
 		}
+		mutex_lock(&inst->lock);
 		bufreq = get_buff_req_buffer(inst,
 			msm_comm_get_hal_output_buffer(inst));
 		if (!bufreq) {
@@ -1217,6 +1218,7 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 				"No buffer requirement for buffer type %x\n",
 				HAL_BUFFER_OUTPUT);
 			rc = -EINVAL;
+			mutex_unlock(&inst->lock);
 			break;
 		}
 		*num_buffers = max(*num_buffers, bufreq->buffer_count_min);
@@ -1228,6 +1230,7 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 			rc = call_hfi_op(hdev, session_set_property,
 				inst->session, property_id, &new_buf_count);
 		}
+		mutex_unlock(&inst->lock);
 		dprintk(VIDC_DBG, "count =  %d, size = %d, alignment = %d\n",
 				inst->buff_req.buffer[1].buffer_count_actual,
 				inst->buff_req.buffer[1].buffer_size,
@@ -1310,16 +1313,18 @@ static inline int start_streaming(struct msm_vidc_inst *inst)
 	}
 
 	mutex_lock(&inst->pendingq.lock);
-	list_for_each_safe(ptr, next, &inst->pendingq.list) {
-		temp = list_entry(ptr, struct vb2_buf_entry, list);
-		rc = msm_comm_qbuf(temp->vb);
-		if (rc) {
-			dprintk(VIDC_ERR,
-				"Failed to qbuf to hardware\n");
-			break;
+	if (!list_empty(&inst->pendingq.list)) {
+		list_for_each_safe(ptr, next, &inst->pendingq.list) {
+			temp = list_entry(ptr, struct vb2_buf_entry, list);
+			rc = msm_comm_qbuf(temp->vb);
+			if (rc) {
+				dprintk(VIDC_ERR,
+					"Failed to qbuf to hardware\n");
+				break;
+			}
+			list_del(&temp->list);
+			kfree(temp);
 		}
-		list_del(&temp->list);
-		kfree(temp);
 	}
 	mutex_unlock(&inst->pendingq.lock);
 	return rc;

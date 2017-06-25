@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -136,11 +136,13 @@ static void venus_hfi_sim_modify_cmd_packet(u8 *packet)
 
 	sys_init = (struct hfi_cmd_sys_session_init_packet *)packet;
 	sess = (struct hal_session *) sys_init->session_id;
+
 	if (!sess) {
 		dprintk(VIDC_DBG, "%s :Invalid session id : %x\n",
 				__func__, sys_init->session_id);
 		return;
 	}
+
 	switch (sys_init->packet_type) {
 	case HFI_CMD_SESSION_EMPTY_BUFFER:
 		if (sess->is_decoder) {
@@ -668,7 +670,7 @@ static int venus_hfi_unvote_bus(void *dev,
 	struct venus_hfi_device *device = dev;
 
 	if (!device) {
-		dprintk(VIDC_ERR, "%s invalid device handle %p",
+		dprintk(VIDC_ERR, "%s invalid device handle %pK",
 			__func__, device);
 		return -EINVAL;
 	}
@@ -765,7 +767,7 @@ static int venus_hfi_scale_bus(void *dev, int load,
 	int bus_vector = 0;
 
 	if (!device) {
-		dprintk(VIDC_ERR, "%s invalid device handle %p",
+		dprintk(VIDC_ERR, "%s invalid device handle %pK",
 			__func__, device);
 		return -EINVAL;
 	}
@@ -1167,7 +1169,7 @@ static inline int venus_hfi_clk_enable(struct venus_hfi_device *device)
 	struct venus_core_clock *cl;
 
 	if (!device) {
-		dprintk(VIDC_ERR, "Invalid params: %p\n", device);
+		dprintk(VIDC_ERR, "Invalid params: %pK\n", device);
 		return -EINVAL;
 	}
 	WARN(!mutex_is_locked(&device->clk_pwr_lock),
@@ -1214,7 +1216,7 @@ static inline void venus_hfi_clk_disable(struct venus_hfi_device *device)
 	struct venus_core_clock *cl;
 
 	if (!device) {
-		dprintk(VIDC_ERR, "Invalid params: %p\n", device);
+		dprintk(VIDC_ERR, "Invalid params: %pK\n", device);
 		return;
 	}
 	WARN(!mutex_is_locked(&device->clk_pwr_lock),
@@ -1359,6 +1361,13 @@ static inline int venus_hfi_power_on(struct venus_hfi_device *device)
 		goto err_iommu_attach;
 	}
 
+	/* Reboot the firmware */
+	rc = venus_hfi_tzbsp_set_video_state(TZBSP_VIDEO_STATE_RESUME);
+	if (rc) {
+		dprintk(VIDC_ERR, "Failed to resume video core %d\n", rc);
+		goto err_set_video_state;
+	}
+
 	/*
 	 * Re-program all of the registers that get reset as a result of
 	 * regulator_disable() and _enable()
@@ -1379,13 +1388,6 @@ static inline int venus_hfi_power_on(struct venus_hfi_device *device)
 	if (!IS_ERR_OR_NULL(device->qdss.align_device_addr))
 		venus_hfi_write_register(device, VIDC_MMAP_ADDR,
 				(u32)device->qdss.align_device_addr, 0);
-
-	/* Reboot the firmware */
-	rc = venus_hfi_tzbsp_set_video_state(TZBSP_VIDEO_STATE_RESUME);
-	if (rc) {
-		dprintk(VIDC_ERR, "Failed to resume video core %d\n", rc);
-		goto err_set_video_state;
-	}
 
 	/* Wait for boot completion */
 	rc = venus_hfi_reset_core(device);
@@ -1510,7 +1512,7 @@ static int venus_hfi_scale_clocks(void *dev, int load)
 	int rc = 0;
 	struct venus_hfi_device *device = dev;
 	if (!device) {
-		dprintk(VIDC_ERR, "Invalid args: %p\n", device);
+		dprintk(VIDC_ERR, "Invalid args: %pK\n", device);
 		return -EINVAL;
 	}
 	device->clk_load = load;
@@ -2149,7 +2151,7 @@ static void venus_hfi_core_clear_interrupt(struct venus_hfi_device *device)
 	int rc = 0;
 
 	if (!device) {
-		dprintk(VIDC_ERR, "%s Invalid paramter: %p\n",
+		dprintk(VIDC_ERR, "%s Invalid paramter: %pK\n",
 			__func__, device);
 		return;
 	}
@@ -2507,7 +2509,7 @@ static int venus_hfi_session_clean(void *session)
 	}
 	sess_close = session;
 	device = sess_close->device;
-	dprintk(VIDC_DBG, "deleted the session: 0x%p",
+	dprintk(VIDC_DBG, "deleted the session: 0x%pK",
 			sess_close);
 	mutex_lock(&device->session_lock);
 	list_del(&sess_close->list);

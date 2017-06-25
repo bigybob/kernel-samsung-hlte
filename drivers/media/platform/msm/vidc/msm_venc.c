@@ -1016,9 +1016,11 @@ static int msm_venc_queue_setup(struct vb2_queue *q,
 	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
 		*num_planes = 1;
 
+		mutex_lock(&inst->lock);
 		*num_buffers = inst->buff_req.buffer[0].buffer_count_actual =
 			max(*num_buffers, inst->buff_req.buffer[0].
 				buffer_count_actual);
+		mutex_unlock(&inst->lock);
 
 		property_id = HAL_PARAM_BUFFER_COUNT_ACTUAL;
 		new_buf_count.buffer_type = HAL_BUFFER_INPUT;
@@ -1123,16 +1125,18 @@ static inline int start_streaming(struct msm_vidc_inst *inst)
 	}
 
 	mutex_lock(&inst->pendingq.lock);
-	list_for_each_safe(ptr, next, &inst->pendingq.list) {
-		temp = list_entry(ptr, struct vb2_buf_entry, list);
-		rc = msm_comm_qbuf(temp->vb);
-		if (rc) {
-			dprintk(VIDC_ERR,
+	if (!list_empty(&inst->pendingq.list)) {
+		list_for_each_safe(ptr, next, &inst->pendingq.list) {
+			temp = list_entry(ptr, struct vb2_buf_entry, list);
+			rc = msm_comm_qbuf(temp->vb);
+			if (rc) {
+				dprintk(VIDC_ERR,
 					"Failed to qbuf to hardware\n");
-			break;
+				break;
+			}
+			list_del(&temp->list);
+			kfree(temp);
 		}
-		list_del(&temp->list);
-		kfree(temp);
 	}
 	mutex_unlock(&inst->pendingq.lock);
 	return rc;
@@ -1325,7 +1329,7 @@ static inline int venc_v4l2_to_hal(int id, int value)
 		default:
 			goto unknown_value;
 		}
-	/* H263 */
+		/* H263 */
 	case V4L2_CID_MPEG_VIDC_VIDEO_H263_PROFILE:
 		switch (value) {
 		case V4L2_MPEG_VIDC_VIDEO_H263_PROFILE_BASELINE:
@@ -3201,7 +3205,7 @@ int msm_venc_ctrl_init(struct msm_vidc_inst *inst)
 		dprintk(VIDC_WARN,
 				"Failed to setup super cluster\n");
 		return -EINVAL;
-	}
+		}
 
 	v4l2_ctrl_cluster(cluster_size, inst->cluster);
 
