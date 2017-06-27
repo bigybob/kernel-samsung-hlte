@@ -67,7 +67,6 @@ lookup_exec_domain(unsigned int personality)
 			if (try_module_get(ep->module))
 				goto out;
 	}
-
 /*
  * Disable the request_module here to avoid trying to
  * load the personality-8 module, which  doesn't exist,
