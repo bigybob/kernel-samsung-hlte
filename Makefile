@@ -380,8 +380,15 @@ KBUILD_CPPFLAGS := -D__KERNEL__
 KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common \
 		   -Werror-implicit-function-declaration \
-		   -Wno-format-security \
-		   -fno-delete-null-pointer-checks \
+		   -Wno-format-security -Wno-unused \
+		   -fno-delete-null-pointer-checks -Wno-format-truncation \
+		   -Wno-int-in-bool-context -Wno-deprecated-declarations \
+		   -Wno-tautological-compare -Wno-bool-compare \
+		   -Wno-array-bounds -Wno-discarded-qualifiers \
+		   -Wno-misleading-indentation -Wno-discarded-array-qualifiers \
+		   -Wno-logical-not-parentheses -Wno-pointer-compare \
+		   -Wno-switch-unreachable -Wno-duplicate-decl-specifier \
+		   -Wno-bool-operation -Wno-switch-bool -Wno-stringop-overflow \
 		   -mtune=cortex-a15 \
 		   -std=gnu89 \
                    --param l1-cache-size=32 \
