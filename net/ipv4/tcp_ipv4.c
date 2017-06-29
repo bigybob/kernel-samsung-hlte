@@ -1728,6 +1728,11 @@ process:
 		goto discard_and_relse;
 
 	skb->dev = NULL;
+	
+	if (sk->sk_state == TCP_LISTEN) {
+		ret = tcp_v4_do_rcv(sk, skb);
+		goto put_and_return;
+	}
 
 	if (sk->sk_state == TCP_LISTEN) {
 		ret = tcp_v4_do_rcv(sk, skb);
