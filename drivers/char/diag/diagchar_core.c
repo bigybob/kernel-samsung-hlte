@@ -267,7 +267,6 @@ static int diag_remove_client_entry(struct file *file)
 	struct diagchar_priv *diagpriv_data = NULL;
 
 	pr_debug("diag: process exit %s\n", current->comm);
-
 	if (!driver)
 		return -ENOMEM;
 
