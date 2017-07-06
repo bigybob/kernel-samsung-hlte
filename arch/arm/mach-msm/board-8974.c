@@ -484,9 +484,6 @@ void __init msm_8974_reserve(void)
 	reserve_info = &msm8974_reserve_info;
 	of_scan_flat_dt(dt_scan_for_memory_reserve, msm8974_reserve_table);
 	msm_reserve();
-#ifdef CONFIG_ANDROID_PERSISTENT_RAM
-	persistent_ram_early_init(&per_ram);
-#endif
 }
 
 static void __init msm8974_early_memory(void)
@@ -632,7 +629,7 @@ void __init msm8974_init(void)
 	msm_8974_init_gpiomux();
 	regulator_has_full_constraints();
 #ifdef CONFIG_ANDROID_RAM_CONSOLE
-        add_ramconsole_devices();
+	add_ramconsole_devices();
 #endif
 	board_dt_populate(adata);
 	msm8974_add_drivers();
