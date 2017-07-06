@@ -484,6 +484,9 @@ void __init msm_8974_reserve(void)
 	reserve_info = &msm8974_reserve_info;
 	of_scan_flat_dt(dt_scan_for_memory_reserve, msm8974_reserve_table);
 	msm_reserve();
+#ifdef CONFIG_ANDROID_PERSISTENT_RAM
+	persistent_ram_early_init(&per_ram);
+#endif
 }
 
 static void __init msm8974_early_memory(void)
