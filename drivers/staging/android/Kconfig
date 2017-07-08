@@ -138,7 +138,7 @@ config RUNTIME_COMPCACHE
 config KSWAPD_NOSWAP
 	bool "Disable swap in kswapd"
 	depends on RUNTIME_COMPCACHE
-	default n
+	default y
 	help
 	  This option controls swap action in kswapd
 
