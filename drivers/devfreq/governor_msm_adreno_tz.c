@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,11 +29,23 @@ static DEFINE_SPINLOCK(tz_lock);
  * FLOOR is 5msec to capture up to 3 re-draws
  * per frame for 60fps content.
  */
-#define FLOOR			5000
+#define FLOOR		        5000
+/*
+ * MIN_BUSY is 1 msec for the sample to be sent
+ */
+#define MIN_BUSY		1000
 #define LONG_FLOOR		50000
 #define HIST			5
 #define TARGET			80
 #define CAP			75
+
+/*
+ * Use BUSY_BIN to check for fully busy rendering
+ * intervals that may need early intervention when
+ * seen with LONG_FRAME lengths
+ */
+#define BUSY_BIN		95
+#define LONG_FRAME		25000
 
 /*
  * CEILING is 50msec, larger than any standard
@@ -46,7 +58,9 @@ static DEFINE_SPINLOCK(tz_lock);
 
 #define TAG "msm_adreno_tz: "
 
-/* Boolean to detect if panel has gone off */
+/* Boolean to detect if pm has entered suspend mode */
+extern bool cpufreq_screen_on;
+static bool suspended = false;
 static bool power_suspended = false;
 
 /* Trap into the TrustZone, and call funcs there. */
@@ -86,10 +100,9 @@ static void _update_cutoff(struct devfreq_msm_adreno_tz_data *priv,
 
 #ifdef CONFIG_SIMPLE_GPU_ALGORITHM
 extern int simple_gpu_active;
-extern int simple_gpu_algorithm(int level,
-		struct devfreq_msm_adreno_tz_data *priv);
+extern int simple_gpu_algorithm(int level, int min_level, int max_level,
+		 unsigned int busy_time);
 #endif
-
 #ifdef CONFIG_ADRENO_IDLER
 extern int adreno_idler(struct devfreq_dev_status stats, struct devfreq *devfreq,
 		 unsigned long *freq);
@@ -102,15 +115,17 @@ static int tz_get_target_freq(struct devfreq *devfreq, unsigned long *freq,
 	struct devfreq_msm_adreno_tz_data *priv = devfreq->data;
 	struct devfreq_dev_status stats;
 	struct xstats b;
-	int val, level = 0;
+	int val = 0, level = 0, min_level = 0, max_level = 0;
 	int act_level;
 	int norm_cycles;
 	int gpu_percent;
+	static int busy_bin, frame_flag;
 
 	if (priv->bus.num)
 		stats.private_data = &b;
 	else
 		stats.private_data = NULL;
+
 	result = devfreq->profile->get_dev_status(devfreq->dev.parent, &stats);
 	if (result) {
 		pr_err(TAG "get_status failed %d\n", result);
@@ -125,13 +140,12 @@ static int tz_get_target_freq(struct devfreq *devfreq, unsigned long *freq,
 
 	*freq = stats.current_frequency;
 	*flag = 0;
-
 	/*
 	 * Force to use & record as min freq when system has
 	 * entered pm-suspend or screen-off state.
 	 */
-	if (power_suspended) {
-		*freq = devfreq->profile->freq_table[devfreq->profile->max_state - 1];
+	if (suspended || power_suspended || !cpufreq_screen_on) {
+		*freq = devfreq->min_freq;
 		return 0;
 	}
 
@@ -141,6 +155,7 @@ static int tz_get_target_freq(struct devfreq *devfreq, unsigned long *freq,
 		return 0;
 	}
 #endif
+
 	priv->bin.total_time += stats.total_time;
 	priv->bin.busy_time += stats.busy_time;
 	if (priv->bus.num) {
@@ -153,15 +168,27 @@ static int tz_get_target_freq(struct devfreq *devfreq, unsigned long *freq,
 	/*
 	 * Do not waste CPU cycles running this algorithm if
 	 * the GPU just started, or if less than FLOOR time
-	 * has passed since the last run.
+	 * has passed since the last run or the gpu hasn't been
+	 * busier than MIN_BUSY.
 	 */
 	if ((stats.total_time == 0) ||
-		(priv->bin.total_time < FLOOR)) {
-		return 1;
+		(priv->bin.total_time < FLOOR) ||
+		(unsigned int) priv->bin.busy_time < MIN_BUSY) {
+		return 0;
+	}
+
+	if ((stats.busy_time * 100 / stats.total_time) > BUSY_BIN) {
+		busy_bin += stats.busy_time;
+		if (stats.total_time > LONG_FRAME)
+			frame_flag = 1;
+	} else {
+		busy_bin = 0;
+		frame_flag = 0;
 	}
 
 	level = devfreq_get_freq_level(devfreq, stats.current_frequency);
-
+	min_level = devfreq->profile->max_state - 1;
+	max_level = 0;
 	if (level < 0) {
 		pr_err(TAG "bad freq %ld\n", stats.current_frequency);
 		return level;
@@ -171,12 +198,15 @@ static int tz_get_target_freq(struct devfreq *devfreq, unsigned long *freq,
 	 * If there is an extended block of busy processing,
 	 * increase frequency.  Otherwise run the normal algorithm.
 	 */
-	if (priv->bin.busy_time > CEILING) {
-		val = -1 * level;
+	if (priv->bin.busy_time > CEILING ||
+		(busy_bin > CEILING && frame_flag)) {
+		val = -1 * (level - max_level);
+		busy_bin = 0;
+		frame_flag = 0;
 	} else {
 #ifdef CONFIG_SIMPLE_GPU_ALGORITHM
 		if (simple_gpu_active != 0)
-			val = simple_gpu_algorithm(level, priv);
+			val = simple_gpu_algorithm(level, min_level, max_level, priv->bin.busy_time);
 		else
 			val = __secure_tz_entry3(TZ_UPDATE_ID,
 					level,
@@ -198,11 +228,10 @@ static int tz_get_target_freq(struct devfreq *devfreq, unsigned long *freq,
 	 */
 	if (val) {
 		level += val;
-		level = max(level, 0);
-		level = min_t(int, level, devfreq->profile->max_state);
+		level = max_t(int, level, max_level);
+		level = min_t(int, level, min_level);
 		goto clear;
 	}
-
 	if (priv->bus.total_time < LONG_FLOOR)
 		goto end;
 	norm_cycles = (unsigned int)priv->bus.ram_time /
@@ -221,6 +250,8 @@ static int tz_get_target_freq(struct devfreq *devfreq, unsigned long *freq,
 		/*
 		 * Normalize by gpu_time unless it is a small fraction of
 		 * the total time interval.
+		 *
+		 * GPU votes for IB not AB so don't under vote the system
 		 */
 		norm_cycles = (100 * norm_cycles) / TARGET;
 		act_level = priv->bus.index[level] + b.mod;
@@ -324,13 +355,14 @@ static int tz_stop(struct devfreq *devfreq)
 	return 0;
 }
 
-
 static int tz_resume(struct devfreq *devfreq)
 {
 	struct devfreq_dev_profile *profile = devfreq->profile;
 	unsigned long freq;
 
 	freq = profile->initial_freq;
+
+	suspended = false;
 
 	return profile->target(devfreq->dev.parent, &freq, 0);
 }
@@ -339,14 +371,27 @@ static int tz_suspend(struct devfreq *devfreq)
 {
 	struct devfreq_msm_adreno_tz_data *priv = devfreq->data;
 
-	__secure_tz_entry2(TZ_RESET_ID, 0, 0);
+	suspended = true;
 
+#ifdef CONFIG_ADRENO_IDLER
+	__secure_tz_entry2(TZ_RESET_ID, 0, 0);
+#else
+	struct devfreq_dev_profile *profile = devfreq->profile;
+	unsigned long freq;
+
+#endif
 	priv->bin.total_time = 0;
 	priv->bin.busy_time = 0;
 	priv->bus.total_time = 0;
 	priv->bus.gpu_time = 0;
 	priv->bus.ram_time = 0;
+#ifdef CONFIG_ADRENO_IDLER
 	return 0;
+#else
+	freq = profile->freq_table[profile->max_state - 1];
+
+	return profile->target(devfreq->dev.parent, &freq, 0);
+#endif
 }
 
 static int tz_handler(struct devfreq *devfreq, unsigned int event, void *data)
