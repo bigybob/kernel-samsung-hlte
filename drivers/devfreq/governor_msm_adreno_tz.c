@@ -373,25 +373,14 @@ static int tz_suspend(struct devfreq *devfreq)
 
 	suspended = true;
 
-#ifdef CONFIG_ADRENO_IDLER
 	__secure_tz_entry2(TZ_RESET_ID, 0, 0);
-#else
-	struct devfreq_dev_profile *profile = devfreq->profile;
-	unsigned long freq;
 
-#endif
 	priv->bin.total_time = 0;
 	priv->bin.busy_time = 0;
 	priv->bus.total_time = 0;
 	priv->bus.gpu_time = 0;
 	priv->bus.ram_time = 0;
-#ifdef CONFIG_ADRENO_IDLER
 	return 0;
-#else
-	freq = profile->freq_table[profile->max_state - 1];
-
-	return profile->target(devfreq->dev.parent, &freq, 0);
-#endif
 }
 
 static int tz_handler(struct devfreq *devfreq, unsigned int event, void *data)
