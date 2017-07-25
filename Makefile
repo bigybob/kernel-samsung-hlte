@@ -377,7 +377,10 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common \
 		   -Werror-implicit-function-declaration \
 		   -Wno-format-security -Wno-unused-variable -Wno-unused-function \
-		   -fno-delete-null-pointer-checks
+		   -fno-delete-null-pointer-checks -Wno-misleading-indentation \
+		   -Wno-discarded-array-qualifiers -Wno-logical-not-parentheses \
+		   -Wno-bool-compare -Wno-shift-overflow -Wno-tautological-compare \
+		   -Wno-header-guard
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__
